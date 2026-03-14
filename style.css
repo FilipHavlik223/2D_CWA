@@ -1,3 +1,127 @@
-body{
-    background:#03010a;
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap');
+
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background: #03010a;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    font-family: 'Share Tech Mono', monospace;
+    overflow: hidden;
+}
+
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(1px 1px at 10% 20%, #fff 0%, transparent 100%),
+    radial-gradient(1px 1px at 30% 50%, #aef 0%, transparent 100%),
+    radial-gradient(1px 1px at 55% 15%, #fff 0%, transparent 100%),
+    radial-gradient(1px 1px at 70% 70%, #ffc 0%, transparent 100%),
+    radial-gradient(1px 1px at 85% 35%, #fff 0%, transparent 100%),
+    radial-gradient(1px 1px at 20% 80%, #aef 0%, transparent 100%),
+    radial-gradient(1px 1px at 45% 90%, #fff 0%, transparent 100%),
+    radial-gradient(1px 1px at 90% 85%, #fff 0%, transparent 100%),
+    radial-gradient(1px 1px at 60% 60%, #ffc 0%, transparent 100%),
+    radial-gradient(1px 1px at 5% 55%, #fff 0%, transparent 100%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+#ui-overlay {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    z-index: 1;
+}
+
+#hud {
+    display: flex;
+    gap: 32px;
+    padding: 8px 24px;
+    background: rgba(0, 20, 50, 0.85);
+    border: 1px solid #0af;
+    border-radius: 6px;
+    color: #0af;
+    font-size: 16px;
+    letter-spacing: 0.05em;
+    font-family: 'Share Tech Mono', monospace;
+    text-shadow: 0 0 8px #0af8;
+}
+
+#gameCanvas {
+    display: block;
+    border: 2px solid #0af;
+    border-radius: 4px;
+    box-shadow: 0 0 30px #0af4, 0 0 60px #0062;
+    background: #050d1f;
+}
+
+#message-box {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(2, 8, 30, 0.96);
+    border: 2px solid #0af;
+    border-radius: 10px;
+    padding: 40px 48px;
+    text-align: center;
+    color: #cef;
+    box-shadow: 0 0 40px #0af6;
+    z-index: 10;
+    min-width: 320px;
+}
+
+#message-box.hidden {
+    display: none;
+}
+
+#msg-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 32px;
+    color: #0af;
+    text-shadow: 0 0 16px #0aff;
+    margin-bottom: 16px;
+}
+
+#msg-body {
+    font-size: 14px;
+    line-height: 1.8;
+    margin-bottom: 12px;
+    color: #9cf;
+}
+
+#msg-controls {
+    font-size: 12px;
+    color: #567;
+    margin-bottom: 28px;
+}
+
+#msg-btn {
+    background: transparent;
+    border: 2px solid #0af;
+    color: #0af;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 14px;
+    padding: 10px 32px;
+    border-radius: 4px;
+    cursor: pointer;
+    letter-spacing: 0.12em;
+    text-shadow: 0 0 8px #0af;
+    box-shadow: 0 0 16px #0af4;
+    transition: background 0.2s, color 0.2s;
+}
+
+#msg-btn:hover {
+    background: #0af;
+    color: #020e20;
 }
