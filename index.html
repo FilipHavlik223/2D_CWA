@@ -1,10 +1,26 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="cs">
 <head>
-    <meta charset="UTF-8">
-    <title>Title</title>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Star Collector 🚀</title>
+    <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
-
+<div id="ui-overlay">
+    <div id="hud">
+        <span id="score-display">⭐ 0</span>
+        <span id="lives-display">❤️❤️❤️</span>
+        <span id="jetpack-display">🚀 Jetpack: –</span>
+    </div>
+    <canvas id="gameCanvas" width="800" height="500"></canvas>
+    <div id="message-box" class="hidden">
+        <h1 id="msg-title">Star Collector</h1>
+        <p id="msg-body">Collect all ⭐ stars, grab the 🔑 key and reach the 🚪 exit!<br>Avoid 🤖 robots!</p>
+        <p id="msg-controls">← → Move &nbsp;|&nbsp; Space / ↑ Jump &nbsp;|&nbsp; Double-jump with 🚀 Jetpack</p>
+        <button id="msg-btn">START MISSION</button>
+    </div>
+</div>
+<script src="game.js"></script>
 </body>
 </html>
