@@ -15,6 +15,6 @@ let lives = 3;
 let currentLevel = 0;
 const TOTAL_LEVELS = 3;
 
-// Uložený stav hvězd
+// Stav hvězd
 let savedStarState = null;
 let savedScore = 0;
