@@ -29,3 +29,27 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', e => {
     keys[e.code] = false;
 });
+
+const msgBox = document.getElementById('message-box');
+const msgBtn = document.getElementById('msg-btn');
+const msgTitle = document.getElementById('msg-title');
+const msgBody = document.getElementById('msg-body');
+
+msgBtn.addEventListener('click', () => {
+    if (state === 'menu' || state === 'gameover' || state === 'allwin') {
+        lives = 3;
+        score = 0;
+        currentLevel = 0;
+        savedStarState = null;
+        savedScore = 0;
+        loadLevel(0);
+    } else if (state === 'dead') {
+        // Respawn
+        loadLevel(currentLevel, true);
+    } else if (state === 'levelwin') {
+        currentLevel++;
+        savedStarState = null;
+        savedScore = 0;
+        loadLevel(currentLevel);
+    }
+});
