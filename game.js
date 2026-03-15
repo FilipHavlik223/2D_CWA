@@ -171,3 +171,260 @@ function getAllLevels() {
 
     ];
 }
+let player, platforms, starPickups, jetpackItem, keyItem, exitDoor, robots, robotSpeed;
+
+function loadLevel(index, isRespawn = false) {
+    const d = getAllLevels()[index];
+
+    robotSpeed = d.robotSpeed;
+    platforms = d.platforms;
+
+    if (isRespawn && savedStarState) {
+        // Zachovej stav hvězd — neobnov sebrané
+        starPickups = d.stars.map((s, i) => ({...s, collected: savedStarState[i]}));
+    } else {
+        starPickups = d.stars.map(s => ({...s, collected: false}));
+        savedStarState = null;
+    }
+
+    // Jetpack a klíč vždy znovu — jinak by nešlo dohrát po respawnu
+    jetpackItem = {...d.jetpack, collected: false};
+    keyItem = {...d.key, collected: false};
+    exitDoor = {...d.exit, open: false};
+    robots = d.robots.map(r => ({...r, stunTimer: 0}));
+
+    player = {
+        x: d.playerStart.x,
+        y: d.playerStart.y,
+        w: 24, h: 32,
+        vx: 0, vy: 0,
+        onGround: false,
+        facingRight: true,
+        jumpCount: 0,
+        hasJetpack: false,
+        jetpackFuel: 0,
+        hasKey: false,
+        invincible: 0,
+    };
+
+    state = 'playing';
+    hideMessage();
+    updateHUD();
+}
+
+// ═══════════════════════════════════════════════════
+//  FYZIKA & KOLIZE  (opravená verze)
+//  Řeší X a Y odděleně → žádné "projíždění rohů"
+// ═══════════════════════════════════════════════════
+function rectOverlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x &&
+        a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function resolvePlayerPlatforms() {
+    player.onGround = false;
+    for (const p of platforms) {
+        if (!rectOverlap(player, p)) continue;
+        const overlapX = Math.min(player.x + player.w, p.x + p.w) - Math.max(player.x, p.x);
+        const overlapY = Math.min(player.y + player.h, p.y + p.h) - Math.max(player.y, p.y);
+        if (overlapX < overlapY) {
+            if (player.x < p.x) player.x = p.x - player.w;
+            else player.x = p.x + p.w;
+            player.vx = 0;
+        } else {
+            if (player.vy >= 0) {
+                player.y = p.y - player.h;
+                player.vy = 0;
+                player.onGround = true;
+                player.jumpCount = 0;
+            } else {
+                player.y = p.y + p.h;
+                player.vy = 0;
+            }
+        }
+    }
+}
+
+//  UPDATE
+function update() {
+    if (state !== 'playing') return;
+
+    // ppohyb
+    if (keys['ArrowLeft'] || keys['KeyA']) {
+        player.vx = -MOVE_SPEED;
+        player.facingRight = false;
+    } else if (keys['ArrowRight'] || keys['KeyD']) {
+        player.vx = MOVE_SPEED;
+        player.facingRight = true;
+    } else {
+        player.vx *= 0.75;
+        if (Math.abs(player.vx) < 0.1) player.vx = 0;
+    }
+
+    // Gravitace
+    player.vy += GRAVITY;
+    if (player.vy > 20) player.vy = 20;
+
+    // Pohyb + kolize
+    player.x += player.vx;
+    player.y += player.vy;
+    resolvePlayerPlatforms();
+
+    // ── Skok (až po kolizi — onGround je aktuální) ─
+    const wantsJump = keys['Space'] || keys['ArrowUp'];
+    if (wantsJump && !player._jumpHeld) {
+        player._jumpHeld = true;
+        if (player.onGround) {
+            player.vy = JUMP_FORCE;
+            player.onGround = false;
+            player.jumpCount = 1;
+        } else if (player.hasJetpack && player.jetpackFuel > 0 && player.jumpCount === 1) {
+            player.vy = JUMP_FORCE * 0.82;
+            player.jetpackFuel--;
+            player.jumpCount = 2;
+            if (player.jetpackFuel === 0) player.hasJetpack = false;
+        }
+    }
+    if (!wantsJump) player._jumpHeld = false;
+
+    // Okraje plátna
+    if (player.x < 0) {
+        player.x = 0;
+        player.vx = 0;
+    }
+    if (player.x + player.w > W) {
+        player.x = W - player.w;
+        player.vx = 0;
+    }
+
+    // Pád do propasti
+    if (player.y > H + 60) {
+        takeDamage();
+        return;
+    }
+
+    // Invincibility
+    if (player.invincible > 0) player.invincible--;
+
+    // Sbírání
+    for (const s of starPickups) {
+        if (s.collected) continue;
+        if (rectOverlap(player, {x: s.x - 9, y: s.y - 9, w: 18, h: 18})) {
+            s.collected = true;
+            score += 10;
+            updateHUD();
+        }
+    }
+
+    // etpack
+    if (!jetpackItem.collected &&
+        rectOverlap(player, {x: jetpackItem.x - 14, y: jetpackItem.y - 16, w: 28, h: 28})) {
+        jetpackItem.collected = true;
+        player.hasJetpack = true;
+        player.jetpackFuel = 3;
+        updateHUD();
+    }
+
+    // Klíč
+    if (!keyItem.collected &&
+        rectOverlap(player, {x: keyItem.x - 12, y: keyItem.y - 12, w: 24, h: 24})) {
+        keyItem.collected = true;
+        player.hasKey = true;
+        exitDoor.open = true;
+        updateHUD();
+    }
+
+    // Exit
+    if (exitDoor.open &&
+        rectOverlap(player, {x: exitDoor.x, y: exitDoor.y - 42, w: 34, h: 46})) {
+        winLevel();
+        return;
+    }
+
+    // Roboti
+    for (const r of robots) {
+        if (r.stunTimer > 0) {
+            r.stunTimer--;
+            continue;
+        }
+
+        r.x += robotSpeed * r.dir;
+        if (r.x >= r.right) {
+            r.x = r.right;
+            r.dir = -1;
+        }
+        if (r.x <= r.left) {
+            r.x = r.left;
+            r.dir = 1;
+        }
+
+        if (player.invincible > 0) continue;
+
+        // Hitbox robota: 28×22
+        const rb = {x: r.x - 14, y: r.y - 22, w: 28, h: 22};
+        if (!rectOverlap(player, rb)) continue;
+
+        // Stomp
+        const playerBottom = player.y + player.h;
+        const robotMid = r.y - 11;
+        if (player.vy > 1 && playerBottom < robotMid + 10) {
+            r.stunTimer = 100;
+            player.vy = JUMP_FORCE * 0.55;
+            player.jumpCount = 1;
+            score += 20;
+            updateHUD();
+        } else {
+            takeDamage();
+            return;
+        }
+    }
+}
+
+// Poškození
+function takeDamage() {
+    // Uložení stavu hvězd
+    if (starPickups) {
+        savedStarState = starPickups.map(s => s.collected);
+        savedScore = score;
+    }
+    lives--;
+    updateHUD();
+    if (lives <= 0) {
+        state = 'gameover';
+        showMessage('MISSION FAILED 💀', `Skóre: ${score} bodů`, 'ZKUSIT ZNOVU');
+    } else {
+        state = 'dead';
+        showMessage(
+            `Zničen! (Level ${currentLevel + 1})`,
+            `Zbývá ${lives} ❤️ &nbsp;|&nbsp; Skóre: ${score}<br><small>Sebrané hvězdy zůstanou!</small>`,
+            'RESPAWN'
+        );
+    }
+}
+
+// Win level
+function winLevel() {
+    const allStars = starPickups.every(s => s.collected);
+    const bonus = allStars ? 50 : 0;
+    score += bonus;
+    savedStarState = null;
+    updateHUD();
+
+    const bonusTxt = allStars ? '<br>🌟 Bonus +50 za všechny hvězdy!' : '';
+
+    if (currentLevel + 1 >= TOTAL_LEVELS) {
+        state = 'allwin';
+        showMessage(
+            '🚀 MISE SPLNĚNA!',
+            `Dokončil jsi všechny ${TOTAL_LEVELS} levely!<br>Celkové skóre: <b>${score}</b> bodů${bonusTxt}`,
+            'HRÁT ZNOVU'
+        );
+    } else {
+        state = 'levelwin';
+        showMessage(
+            `✅ Level ${currentLevel + 1} dokončen!`,
+            `Skóre: <b>${score}</b> bodů${bonusTxt}<br><br>Připrav se na Level ${currentLevel + 2}...`,
+            `LEVEL ${currentLevel + 2} →`
+        );
+    }
+}
