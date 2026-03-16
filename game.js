@@ -171,3 +171,508 @@ function getAllLevels() {
 
     ];
 }
+let player, platforms, starPickups, jetpackItem, keyItem, exitDoor, robots, robotSpeed;
+
+function loadLevel(index, isRespawn = false) {
+    const d = getAllLevels()[index];
+
+    robotSpeed = d.robotSpeed;
+    platforms = d.platforms;
+
+    if (isRespawn && savedStarState) {
+        // Zachovej stav hvězd — neobnov sebrané
+        starPickups = d.stars.map((s, i) => ({...s, collected: savedStarState[i]}));
+    } else {
+        starPickups = d.stars.map(s => ({...s, collected: false}));
+        savedStarState = null;
+    }
+
+    // Jetpack a klíč vždy znovu — jinak by nešlo dohrát po respawnu
+    jetpackItem = {...d.jetpack, collected: false};
+    keyItem = {...d.key, collected: false};
+    exitDoor = {...d.exit, open: false};
+    robots = d.robots.map(r => ({...r, stunTimer: 0}));
+
+    player = {
+        x: d.playerStart.x,
+        y: d.playerStart.y,
+        w: 24, h: 32,
+        vx: 0, vy: 0,
+        onGround: false,
+        facingRight: true,
+        jumpCount: 0,
+        hasJetpack: false,
+        jetpackFuel: 0,
+        hasKey: false,
+        invincible: 0,
+    };
+
+    state = 'playing';
+    hideMessage();
+    updateHUD();
+}
+
+// ═══════════════════════════════════════════════════
+//  FYZIKA & KOLIZE  (opravená verze)
+//  Řeší X a Y odděleně → žádné "projíždění rohů"
+// ═══════════════════════════════════════════════════
+function rectOverlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x &&
+        a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function resolvePlayerPlatforms() {
+    player.onGround = false;
+    for (const p of platforms) {
+        if (!rectOverlap(player, p)) continue;
+        const overlapX = Math.min(player.x + player.w, p.x + p.w) - Math.max(player.x, p.x);
+        const overlapY = Math.min(player.y + player.h, p.y + p.h) - Math.max(player.y, p.y);
+        if (overlapX < overlapY) {
+            if (player.x < p.x) player.x = p.x - player.w;
+            else player.x = p.x + p.w;
+            player.vx = 0;
+        } else {
+            if (player.vy >= 0) {
+                player.y = p.y - player.h;
+                player.vy = 0;
+                player.onGround = true;
+                player.jumpCount = 0;
+            } else {
+                player.y = p.y + p.h;
+                player.vy = 0;
+            }
+        }
+    }
+}
+
+//  UPDATE
+function update() {
+    if (state !== 'playing') return;
+
+    // ppohyb
+    if (keys['ArrowLeft'] || keys['KeyA']) {
+        player.vx = -MOVE_SPEED;
+        player.facingRight = false;
+    } else if (keys['ArrowRight'] || keys['KeyD']) {
+        player.vx = MOVE_SPEED;
+        player.facingRight = true;
+    } else {
+        player.vx *= 0.75;
+        if (Math.abs(player.vx) < 0.1) player.vx = 0;
+    }
+
+    // Gravitace
+    player.vy += GRAVITY;
+    if (player.vy > 20) player.vy = 20;
+
+    // Pohyb + kolize
+    player.x += player.vx;
+    player.y += player.vy;
+    resolvePlayerPlatforms();
+
+    // ── Skok (až po kolizi — onGround je aktuální) ─
+    const wantsJump = keys['Space'] || keys['ArrowUp'];
+    if (wantsJump && !player._jumpHeld) {
+        player._jumpHeld = true;
+        if (player.onGround) {
+            player.vy = JUMP_FORCE;
+            player.onGround = false;
+            player.jumpCount = 1;
+        } else if (player.hasJetpack && player.jetpackFuel > 0 && player.jumpCount === 1) {
+            player.vy = JUMP_FORCE * 0.82;
+            player.jetpackFuel--;
+            player.jumpCount = 2;
+            if (player.jetpackFuel === 0) player.hasJetpack = false;
+        }
+    }
+    if (!wantsJump) player._jumpHeld = false;
+
+    // Okraje plátna
+    if (player.x < 0) {
+        player.x = 0;
+        player.vx = 0;
+    }
+    if (player.x + player.w > W) {
+        player.x = W - player.w;
+        player.vx = 0;
+    }
+
+    // Pád do propasti
+    if (player.y > H + 60) {
+        takeDamage();
+        return;
+    }
+
+    // Invincibility
+    if (player.invincible > 0) player.invincible--;
+
+    // Sbírání
+    for (const s of starPickups) {
+        if (s.collected) continue;
+        if (rectOverlap(player, {x: s.x - 9, y: s.y - 9, w: 18, h: 18})) {
+            s.collected = true;
+            score += 10;
+            updateHUD();
+        }
+    }
+
+    // etpack
+    if (!jetpackItem.collected &&
+        rectOverlap(player, {x: jetpackItem.x - 14, y: jetpackItem.y - 16, w: 28, h: 28})) {
+        jetpackItem.collected = true;
+        player.hasJetpack = true;
+        player.jetpackFuel = 3;
+        updateHUD();
+    }
+
+    // Klíč
+    if (!keyItem.collected &&
+        rectOverlap(player, {x: keyItem.x - 12, y: keyItem.y - 12, w: 24, h: 24})) {
+        keyItem.collected = true;
+        player.hasKey = true;
+        exitDoor.open = true;
+        updateHUD();
+    }
+
+    // Exit
+    if (exitDoor.open &&
+        rectOverlap(player, {x: exitDoor.x, y: exitDoor.y - 42, w: 34, h: 46})) {
+        winLevel();
+        return;
+    }
+
+    // Roboti
+    for (const r of robots) {
+        if (r.stunTimer > 0) {
+            r.stunTimer--;
+            continue;
+        }
+
+        r.x += robotSpeed * r.dir;
+        if (r.x >= r.right) {
+            r.x = r.right;
+            r.dir = -1;
+        }
+        if (r.x <= r.left) {
+            r.x = r.left;
+            r.dir = 1;
+        }
+
+        if (player.invincible > 0) continue;
+
+        // Hitbox robota: 28×22
+        const rb = {x: r.x - 14, y: r.y - 22, w: 28, h: 22};
+        if (!rectOverlap(player, rb)) continue;
+
+        // Stomp
+        const playerBottom = player.y + player.h;
+        const robotMid = r.y - 11;
+        if (player.vy > 1 && playerBottom < robotMid + 10) {
+            r.stunTimer = 100;
+            player.vy = JUMP_FORCE * 0.55;
+            player.jumpCount = 1;
+            score += 20;
+            updateHUD();
+        } else {
+            takeDamage();
+            return;
+        }
+    }
+}
+
+// Poškození
+function takeDamage() {
+    // Uložení stavu hvězd
+    if (starPickups) {
+        savedStarState = starPickups.map(s => s.collected);
+        savedScore = score;
+    }
+    lives--;
+    updateHUD();
+    if (lives <= 0) {
+        state = 'gameover';
+        showMessage('MISSION FAILED 💀', `Skóre: ${score} bodů`, 'ZKUSIT ZNOVU');
+    } else {
+        state = 'dead';
+        showMessage(
+            `Zničen! (Level ${currentLevel + 1})`,
+            `Zbývá ${lives} ❤️ &nbsp;|&nbsp; Skóre: ${score}<br><small>Sebrané hvězdy zůstanou!</small>`,
+            'RESPAWN'
+        );
+    }
+}
+
+// Win level
+function winLevel() {
+    const allStars = starPickups.every(s => s.collected);
+    const bonus = allStars ? 50 : 0;
+    score += bonus;
+    savedStarState = null;
+    updateHUD();
+
+    const bonusTxt = allStars ? '<br>🌟 Bonus +50 za všechny hvězdy!' : '';
+
+    if (currentLevel + 1 >= TOTAL_LEVELS) {
+        state = 'allwin';
+        showMessage(
+            '🚀 MISE SPLNĚNA!',
+            `Dokončil jsi všechny ${TOTAL_LEVELS} levely!<br>Celkové skóre: <b>${score}</b> bodů${bonusTxt}`,
+            'HRÁT ZNOVU'
+        );
+    } else {
+        state = 'levelwin';
+        showMessage(
+            `✅ Level ${currentLevel + 1} dokončen!`,
+            `Skóre: <b>${score}</b> bodů${bonusTxt}<br><br>Připrav se na Level ${currentLevel + 2}...`,
+            `LEVEL ${currentLevel + 2} →`
+        );
+    }
+}
+
+const COL = {
+    sky: '#050d1f', platform: '#1a3a5c',
+    star: '#ffe566', jetpack: '#f60', key: '#ffd700',
+    exitClosed: '#555', exitOpen: '#0f8',
+    robot: '#c44', robotStun: '#666',
+    player: '#4af', playerSuit: '#1a6fa8',
+};
+const LEVEL_EDGE = ['#0af', '#f80', '#c0f'];
+
+function roundRect(x, y, w, h, r, fill, stroke) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+    if (fill) {
+        ctx.fillStyle = fill;
+        ctx.fill();
+    }
+    if (stroke) {
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+}
+
+function drawBackground() {
+    ctx.fillStyle = COL.sky;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = '#4488cc';
+    ctx.beginPath();
+    ctx.arc(680, 80, 55, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#cc8844';
+    ctx.beginPath();
+    ctx.arc(100, 70, 35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    // Level indikátor
+    ctx.fillStyle = LEVEL_EDGE[currentLevel] || '#0af';
+    ctx.globalAlpha = 0.7;
+    ctx.font = 'bold 13px Share Tech Mono';
+    ctx.textAlign = 'right';
+    ctx.fillText(`LEVEL ${currentLevel + 1} / ${TOTAL_LEVELS}`, W - 12, H - 12);
+    ctx.globalAlpha = 1;
+}
+
+function drawPlatforms() {
+    const edge = LEVEL_EDGE[currentLevel] || '#0af';
+    for (const p of platforms) {
+        ctx.fillStyle = COL.platform;
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+        ctx.fillStyle = edge;
+        ctx.fillRect(p.x, p.y, p.w, 3);
+        ctx.fillStyle = 'rgba(0,170,255,0.06)';
+        ctx.fillRect(p.x, p.y + 3, p.w, p.h - 3);
+    }
+}
+
+function drawStar5(cx, cy, r1, r2, color) {
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+        const angle = (Math.PI / 5) * i - Math.PI / 2;
+        const r = i % 2 === 0 ? r2 : r1;
+        ctx.lineTo(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r);
+    }
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+}
+
+function drawStars() {
+    for (const s of starPickups) {
+        if (s.collected) continue;
+        const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, 14);
+        g.addColorStop(0, 'rgba(255,220,60,0.45)');
+        g.addColorStop(1, 'rgba(255,180,0,0)');
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 14, 0, Math.PI * 2);
+        ctx.fillStyle = g;
+        ctx.fill();
+        drawStar5(s.x, s.y, 5, 9, COL.star);
+    }
+}
+
+function drawJetpack() {
+    if (jetpackItem.collected) return;
+    const {x, y} = jetpackItem;
+    roundRect(x - 12, y - 16, 24, 20, 4, '#1a1a40', '#f60');
+    ctx.fillStyle = '#f60';
+    ctx.fillRect(x - 6, y + 4, 5, 8);
+    ctx.fillRect(x + 1, y + 4, 5, 8);
+    ctx.fillStyle = '#ff0';
+    ctx.fillRect(x - 5, y + 10, 3, 4);
+    ctx.fillRect(x + 2, y + 10, 3, 4);
+    ctx.fillStyle = '#f80';
+    ctx.font = '10px Share Tech Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText('JET', x, y - 20);
+}
+
+function drawKey() {
+    if (keyItem.collected) return;
+    const {x, y} = keyItem;
+    ctx.strokeStyle = COL.key;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x, y - 4, 6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x + 6, y - 4);
+    ctx.lineTo(x + 14, y - 4);
+    ctx.lineTo(x + 14, y);
+    ctx.lineTo(x + 11, y);
+    ctx.lineTo(x + 11, y + 3);
+    ctx.lineTo(x + 8, y + 3);
+    ctx.lineTo(x + 8, y);
+    ctx.stroke();
+    ctx.fillStyle = COL.key;
+    ctx.font = '10px Share Tech Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText('KEY', x + 7, y - 18);
+}
+
+function drawExit() {
+    const {x, y, open} = exitDoor;
+    const color = open ? COL.exitOpen : COL.exitClosed;
+    roundRect(x, y - 42, 34, 46, 3, open ? 'rgba(0,255,128,0.1)' : '#111', color);
+    ctx.font = '20px serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(open ? '🚪' : '🔒', x + 17, y - 12);
+    ctx.font = '10px Share Tech Mono';
+    ctx.fillStyle = color;
+    ctx.fillText(open ? 'EXIT' : 'LOCKED', x + 17, y - 48);
+}
+
+function drawRobots() {
+    for (const r of robots) {
+        const col = r.stunTimer > 0 ? COL.robotStun : COL.robot;
+        roundRect(r.x - 12, r.y - 22, 24, 20, 3, col, r.stunTimer > 0 ? '#444' : '#900');
+        roundRect(r.x - 8, r.y - 36, 16, 15, 3, col, r.stunTimer > 0 ? '#444' : '#900');
+        ctx.fillStyle = r.stunTimer > 0 ? '#333' : '#ff0';
+        ctx.fillRect(r.x - 5, r.y - 32, 4, 4);
+        ctx.fillRect(r.x + 1, r.y - 32, 4, 4);
+        ctx.fillStyle = col;
+        ctx.fillRect(r.x - 10, r.y - 2, 7, 4);
+        ctx.fillRect(r.x + 3, r.y - 2, 7, 4);
+        if (r.stunTimer > 0 && r.stunTimer % 20 < 10) {
+            ctx.font = '12px serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('💫', r.x, r.y - 42);
+        }
+    }
+}
+
+function drawPlayer() {
+    if (player.invincible > 0 && Math.floor(player.invincible / 5) % 2 === 0) return;
+    const {x, y, w, h, facingRight, hasJetpack} = player;
+    const cx = x + w / 2;
+    ctx.save();
+    if (!facingRight) {
+        ctx.translate(cx * 2, 0);
+        ctx.scale(-1, 1);
+    }
+    roundRect(x + 2, y + 12, w - 4, h - 14, 5, COL.playerSuit, COL.player);
+    roundRect(x + 1, y, w - 2, 16, 7, '#1a2a4a', COL.player);
+    roundRect(x + 5, y + 3, w - 10, 9, 3, 'rgba(100,220,255,0.35)', '#0af');
+    ctx.fillStyle = COL.playerSuit;
+    ctx.fillRect(x + 3, y + h - 6, 7, 6);
+    ctx.fillRect(x + w - 10, y + h - 6, 7, 6);
+    ctx.fillStyle = COL.player;
+    ctx.fillRect(x - 2, y + 14, 5, 10);
+    ctx.fillRect(x + w - 3, y + 14, 5, 10);
+    if (hasJetpack) {
+        roundRect(x + w - 2, y + 10, 8, 14, 2, '#c40', '#f60');
+        ctx.fillStyle = '#ff0';
+        ctx.fillRect(x + w, y + 22, 4, 4);
+    }
+    ctx.restore();
+}
+
+function draw() {
+    drawBackground();
+    if (!Array.isArray(platforms)) return;
+    drawPlatforms();
+    drawStars();
+    drawJetpack();
+    drawKey();
+    drawExit();
+    drawRobots();
+    drawPlayer();
+}
+
+
+//  HUD
+function updateHUD() {
+    document.getElementById('score-display').textContent = `⭐ ${score}`;
+    document.getElementById('lives-display').textContent = '❤️'.repeat(Math.max(0, lives));
+    const jp = document.getElementById('jetpack-display');
+    if (player && player.hasJetpack) {
+        jp.textContent = `🚀 ${'▮'.repeat(player.jetpackFuel)}${'▯'.repeat(3 - player.jetpackFuel)}`;
+        jp.style.color = '#f80';
+    } else {
+        jp.textContent = player && player.hasKey ? '🔑 ✔' : '🔑 ✖';
+        jp.style.color = player && player.hasKey ? '#ffd700' : '#555';
+    }
+}
+
+function showMessage(title, body, btnText) {
+    msgBox.classList.remove('hidden');
+    msgTitle.textContent = title;
+    msgBody.innerHTML = body;
+    msgBtn.textContent = btnText;
+}
+
+function hideMessage() {
+    msgBox.classList.add('hidden');
+}
+
+
+// game loop
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+// start
+showMessage(
+    'Star collector 🚀',
+    `Sbírej ⭐ hvězdy, najdi 🔑 klíč a projdi 🚪 exit!<br>
+   Dávej pozor na 🤖 roboty!<br><br>
+   <small>← → pohyb &nbsp;|&nbsp; Space / ↑ skok<br>
+   Jetpack 🚀 = dvojitý skok<br><br>
+   3 levely s postupně těžší obtížností 💪</small>`,
+    'START — LEVEL 1'
+);
+player = {hasJetpack: false, jetpackFuel: 0, hasKey: false, invincible: 0};
+updateHUD();
+gameLoop();
