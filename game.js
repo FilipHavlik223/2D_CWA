@@ -180,14 +180,14 @@ function loadLevel(index, isRespawn = false) {
     platforms = d.platforms;
 
     if (isRespawn && savedStarState) {
-        // Zachovej stav hvězd — neobnov sebrané
+        // Zachovej stav hvězd
         starPickups = d.stars.map((s, i) => ({...s, collected: savedStarState[i]}));
     } else {
         starPickups = d.stars.map(s => ({...s, collected: false}));
         savedStarState = null;
     }
 
-    // Jetpack a klíč vždy znovu — jinak by nešlo dohrát po respawnu
+    // Jetpack a klíč vždy znovu
     jetpackItem = {...d.jetpack, collected: false};
     keyItem = {...d.key, collected: false};
     exitDoor = {...d.exit, open: false};
@@ -212,10 +212,9 @@ function loadLevel(index, isRespawn = false) {
     updateHUD();
 }
 
-// ═══════════════════════════════════════════════════
-//  FYZIKA & KOLIZE  (opravená verze)
-//  Řeší X a Y odděleně → žádné "projíždění rohů"
-// ═══════════════════════════════════════════════════
+//  Fyzika kolize
+//  VYŘEŠIT PROJÍŽĚNÍ ROHAMA
+
 function rectOverlap(a, b) {
     return a.x < b.x + b.w && a.x + a.w > b.x &&
         a.y < b.y + b.h && a.y + a.h > b.y;
@@ -270,7 +269,7 @@ function update() {
     player.y += player.vy;
     resolvePlayerPlatforms();
 
-    // ── Skok (až po kolizi — onGround je aktuální) ─
+    // Skok  kolizi
     const wantsJump = keys['Space'] || keys['ArrowUp'];
     if (wantsJump && !player._jumpHeld) {
         player._jumpHeld = true;
@@ -629,7 +628,6 @@ function draw() {
     drawPlayer();
 }
 
-
 //  HUD
 function updateHUD() {
     document.getElementById('score-display').textContent = `⭐ ${score}`;
@@ -654,7 +652,6 @@ function showMessage(title, body, btnText) {
 function hideMessage() {
     msgBox.classList.add('hidden');
 }
-
 
 // game loop
 function gameLoop() {
